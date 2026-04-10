@@ -10,7 +10,7 @@
 |------|---------|---------------|
 | **Node.js** | v18+ | `node --version` |
 | **npm** | v9+ | `npm --version` |
-| **Python** | 3.10+ | `python --version` |
+| **Python** | 3.10+ | `python --version` |S
 | **pip** | latest | `pip --version` |
 | **Arduino IDE** | 2.x | — |
 
@@ -113,15 +113,39 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 5. Click **Upload**
 6. Open **Serial Monitor** (115200 baud) to see connection status
 
-### Find your PC's local IP:
-```bash
-# Windows
-ipconfig
+### ⚠️ How to find your PC's backend IP address
 
-# macOS/Linux
-ifconfig
+The ESP32 connects to your phone hotspot. Your PC must be on the **same hotspot**.
+The ESP32 needs to know your PC's IP on that network.
+
+**Step 1 — Connect your PC to the phone hotspot** ("Backend")
+
+**Step 2 — Find your PC's IP on the hotspot:**
+
+```powershell
+# Windows PowerShell or CMD
+ipconfig
 ```
-Look for the IPv4 address on your Wi-Fi adapter (e.g., `192.168.1.100`).
+
+Look for the section called **Wireless LAN adapter Wi-Fi** and find:
+```
+IPv4 Address. . . . . . . . . . . : 192.168.X.X   ← THIS is your BACKEND_IP
+```
+
+> **Example output:**
+> ```
+> Wireless LAN adapter Wi-Fi:
+>    IPv4 Address. . . . . : 192.168.156.23   ← your backend IP
+>    Subnet Mask . . . . . : 255.255.255.0
+>    Default Gateway . . . : 192.168.156.1
+> ```
+
+**Step 3 — Paste it into `wifi_test.ino`:**
+```cpp
+const char* BACKEND_IP = "192.168.156.23";  // ← your actual IP
+```
+
+> **Note:** The IP changes every time you reconnect to the hotspot. Re-run `ipconfig` if the ESP32 stops connecting.
 
 ---
 
@@ -130,17 +154,25 @@ Look for the IPv4 address on your Wi-Fi adapter (e.g., `192.168.1.100`).
 ### Start order:
 
 ```
-Step 1: Backend    →  cd Backend && python main.py
-Step 2: Frontend   →  cd frontend && npm start
-Step 3: Hardware   →  Power on ESP32 (already uploaded)
+Step 1 → PC joins phone hotspot ("Backend")
+Step 2 → cd Backend && python main.py
+Step 3 → cd frontend && npm start       (new terminal)
+Step 4 → Open http://localhost:3000     (dashboard)
+Step 5 → Open http://localhost:8000/docs (Swagger UI for testing)
+Step 6 → Upload wifi_test.ino to ESP32  (when ready for hardware)
 ```
 
-### Verify integration:
-1. ✅ Backend terminal shows: `ESP32 connected`
-2. ✅ Backend terminal shows: `Dashboard client connected`
-3. ✅ Frontend dashboard switches from **Demo Mode** to **Live Mode**
-4. ✅ 3D model moves in sync with your body movements
-5. ✅ Posture score and alerts update in real-time
+### Testing WITHOUT hardware (Swagger UI):
+1. Start backend (`python main.py`)
+2. Open `http://localhost:8000/docs`
+3. Click **POST /api/sensor-data → Try it out → Execute**
+4. Dashboard updates within 200ms
+
+### Verify ESP32 integration:
+1. ✅ Serial Monitor shows "Connected!" with an IP address
+2. ✅ Serial Monitor shows "HTTP Code : 200"
+3. ✅ Backend terminal shows incoming classification logs
+4. ✅ Dashboard switches to **LIVE** and shows posture data
 
 ---
 
@@ -149,48 +181,27 @@ Step 3: Hardware   →  Power on ESP32 (already uploaded)
 ```
 PoseGuide/
 ├── frontend/                    # React + TypeScript Dashboard
-│   ├── public/
-│   │   └── index.html           # SEO-optimized HTML shell
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── AlertBanner/     # Posture warning notifications
-│   │   │   ├── AngleChart/      # Real-time time-series chart
-│   │   │   ├── Layout/          # App shell with sidebar
-│   │   │   ├── PostureModel/    # 3D human skeleton (Three.js)
-│   │   │   ├── PostureScore/    # Circular score gauge
-│   │   │   ├── Sidebar/         # Navigation sidebar
-│   │   │   └── SensorStatus/    # Sensor connection panel
-│   │   ├── hooks/
-│   │   │   └── usePostureSocket.ts  # WebSocket hook
-│   │   ├── pages/
-│   │   │   ├── Dashboard.tsx    # Main monitoring page
-│   │   │   ├── Analytics.tsx    # Session statistics
-│   │   │   └── Settings.tsx     # Configuration page
-│   │   ├── types/
-│   │   │   └── posture.ts       # Shared TypeScript interfaces
-│   │   ├── utils/
-│   │   │   └── postureClassifier.ts  # Score colors & labels
-│   │   ├── App.tsx              # Root with routing
-│   │   ├── App.css
-│   │   └── index.css            # Design system
-│   ├── package.json
-│   └── tsconfig.json
+│   └── src/
+│       ├── components/          # UI components (PostureModel, Score, Chart...)
+│       ├── hooks/
+│       │   └── usePosturePolling.ts  # REST polling hook (200ms)
+│       ├── pages/               # Dashboard, Analytics, Settings
+│       └── types/posture.ts     # Shared TypeScript interfaces
 │
 ├── Backend/                     # FastAPI Python Server
-│   ├── main.py                  # WebSocket server
-│   ├── models.py                # Pydantic data models
+│   ├── main.py                  # REST + WebSocket server
+│   ├── models.py                # Pydantic models
 │   ├── posture_classifier.py    # Posture analysis engine
-│   ├── config.py                # Thresholds & settings
-│   ├── requirements.txt
-│   └── venv/
+│   └── requirements.txt
 │
-├── Hardware/                    # ESP32 Arduino Firmware
-│   ├── posture_sensor.ino       # Main firmware sketch
+├── Hardware/
+│   ├── wifi_test.ino            # ← START HERE (WiFi + hardcoded data test)
+│   ├── posture_sensor.ino       # Full firmware (real sensors, use later)
 │   ├── config.h                 # Wi-Fi & sensor config
-│   └── README.md                # Wiring & setup guide
+│   └── README.md
 │
-├── instructions.md              # ← You are here
-├── README.md                    # Project overview
+├── instructions.md
+├── README.md
 └── .gitignore
 ```
 
@@ -200,9 +211,11 @@ PoseGuide/
 
 | Issue | Solution |
 |-------|----------|
-| Frontend shows "Demo Mode" | Ensure backend is running and ESP32 is connected |
-| WebSocket connection fails | Check that backend is on port 8000 and CORS allows localhost:3000 |
-| ESP32 won't connect to Wi-Fi | Verify SSID/password in `config.h`, check 2.4GHz network |
-| Sensor readings are erratic | Check I2C wiring, verify MPU addresses (0x68, 0x69) |
-| Backend import errors | Ensure virtual environment is activated before running |
-| `npm install` fails | Try deleting `node_modules` and `package-lock.json`, then retry |
+| ESP32 says "Failed to connect" | Check hotspot name = `Backend`, password = `helloguys`, 2.4GHz only |
+| ESP32 shows "HTTP Code: -1" | Backend not running — run `python main.py` in Backend folder |
+| ESP32 shows "HTTP Code: -11" | Wrong IP or PC firewall blocking port 8000 — try disabling Windows firewall temporarily |
+| ESP32 connects but dashboard stays OFFLINE | PC is not on the same hotspot as ESP32 |
+| Frontend stays WAITING | No data posted yet — use Swagger UI or upload wifi_test.ino |
+| Backend import errors | Virtual environment not activated — run `.\venv\Scripts\activate` first |
+| `npm install` fails | Delete `node_modules` + `package-lock.json`, then `npm install --force` |
+| IP address changed | Run `ipconfig` again, update `BACKEND_IP` in the .ino file and re-upload |

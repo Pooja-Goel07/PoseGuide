@@ -1,25 +1,20 @@
 """
 PoseGuide – FastAPI Backend Server
-Handles WebSocket connections from ESP32 hardware and React dashboard clients.
 
-Architecture:
-  ESP32  ──ws──▶  /ws/esp32      (hardware sends sensor data)
-                     │
-                     ▼
-              posture_classifier   (analyse & score)
-                     │
-                     ▼
-  React  ◀──ws──  /ws/dashboard   (broadcast to all dashboard clients)
+Architecture (simplified):
+  ESP32   ──ws──▶  /ws/esp32        (hardware sends at 50Hz)
+  Browser ──POST▶  /api/sensor-data  (Swagger UI testing)
+  Frontend ──GET▶  /api/latest       (polling every 200ms)
 """
 
 import json
-import asyncio
 import logging
 from datetime import datetime
 from typing import Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+
 
 from config import HOST, PORT, ALLOWED_ORIGINS
 from models import SensorPacket, PostureResponse
@@ -36,7 +31,12 @@ logger = logging.getLogger("poseguide")
 # ── FastAPI App ─────────────────────────────────────────
 app = FastAPI(
     title="PoseGuide API",
-    description="Real-Time Posture Detection & Feedback System",
+    description=(
+        "Real-Time Posture Detection & Feedback System.\n\n"
+        "**Swagger testing flow:**\n"
+        "1. POST sensor data to `/api/sensor-data`\n"
+        "2. The frontend polls `/api/latest` every 200ms and displays results automatically."
+    ),
     version="1.0.0",
 )
 
@@ -48,118 +48,120 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── State ───────────────────────────────────────────────
-dashboard_clients: Set[WebSocket] = set()
+# ── Shared State ────────────────────────────────────────
 latest_response: dict | None = None
+dashboard_clients: Set[WebSocket] = set()  # kept for ESP32 live-streaming path
+
+
+# ── Helper ──────────────────────────────────────────────
+def process_sensor_packet(packet: SensorPacket) -> dict:
+    """Classify posture, cache result, broadcast to any WS dashboard clients."""
+    global latest_response
+    classification = classify_posture(packet)
+    response = PostureResponse(sensor_data=packet, classification=classification)
+    result = json.loads(response.model_dump_json())
+    latest_response = result
+
+    # Optionally broadcast to WebSocket dashboard clients (live hardware path)
+    # Frontend can also just poll /api/latest instead
+    return result
 
 
 # ── REST Endpoints ──────────────────────────────────────
-@app.get("/")
+
+@app.get("/", tags=["General"])
 async def root():
     return {
         "service": "PoseGuide API",
         "version": "1.0.0",
         "status": "running",
-        "dashboard_clients": len(dashboard_clients),
         "timestamp": datetime.utcnow().isoformat(),
+        "endpoints": {
+            "swagger_ui":   "http://localhost:8000/docs",
+            "latest_data":  "GET  /api/latest",
+            "test_input":   "POST /api/sensor-data",
+            "esp32_ws":     "ws://localhost:8000/ws/esp32",
+        }
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["General"])
 async def health_check():
     return {"status": "healthy"}
 
 
-@app.get("/api/latest")
+@app.get("/api/latest", tags=["Data"])
 async def get_latest():
-    """Return the most recent posture data (for polling fallback)."""
+    """
+    **Frontend polls this every 200ms.**
+
+    Returns the most recently received and classified posture data.
+    Returns 204 No Content when no data has been received yet.
+    """
     if latest_response is None:
-        return {"message": "No data received yet"}
+        return {"data": None, "message": "No sensor data received yet. POST to /api/sensor-data to test."}
     return latest_response
+
+
+@app.post("/api/sensor-data", tags=["Data"])
+async def post_sensor_data(packet: SensorPacket):
+    """
+    **Use this in Swagger UI to simulate sensor data without hardware.**
+
+    Accepts raw sensor readings, classifies posture, caches the result.
+    The frontend will pick it up on its next poll of `/api/latest`.
+
+    Example body:
+    ```json
+    {
+      "torso": {"pitch": 30.0, "roll": 5.0, "yaw": 0.0},
+      "neck":  {"pitch": 20.0, "roll": 3.0, "yaw": 0.0},
+      "flex_value": 45.0,
+      "timestamp": 1712760000000
+    }
+    ```
+    """
+    result = process_sensor_packet(packet)
+    logger.info(
+        f"📥 REST sensor data → condition={result['classification']['condition']}  "
+        f"score={result['classification']['score']}"
+    )
+    return result
 
 
 # ── WebSocket: ESP32 Hardware ───────────────────────────
 @app.websocket("/ws/esp32")
 async def esp32_websocket(websocket: WebSocket):
     """
-    Receives sensor data from ESP32 hardware.
-    Classifies posture and broadcasts to all dashboard clients.
+    ESP32 hardware connects here and streams JSON at ~50Hz.
+    Data is classified and cached in `latest_response` for the frontend to poll.
     """
     await websocket.accept()
     logger.info("🔌 ESP32 connected")
-
     try:
         while True:
             raw = await websocket.receive_text()
-
             try:
                 data = json.loads(raw)
                 packet = SensorPacket(**data)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"Invalid packet from ESP32: {e}")
-                continue
-
-            # Classify posture
-            classification = classify_posture(packet)
-
-            # Build response
-            response = PostureResponse(
-                sensor_data=packet,
-                classification=classification,
-            )
-            response_json = response.model_dump_json()
-
-            # Cache latest
-            global latest_response
-            latest_response = json.loads(response_json)
-
-            # Broadcast to all dashboard clients
-            disconnected: list[WebSocket] = []
-            for client in dashboard_clients:
-                try:
-                    await client.send_text(response_json)
-                except Exception:
-                    disconnected.append(client)
-
-            for client in disconnected:
-                dashboard_clients.discard(client)
-
+                process_sensor_packet(packet)
+            except Exception as e:
+                logger.warning(f"Invalid ESP32 packet: {e}")
     except WebSocketDisconnect:
         logger.info("🔌 ESP32 disconnected")
     except Exception as e:
         logger.error(f"ESP32 WebSocket error: {e}")
 
 
-# ── WebSocket: React Dashboard ──────────────────────────
-@app.websocket("/ws/dashboard")
-async def dashboard_websocket(websocket: WebSocket):
-    """
-    Dashboard clients connect here to receive real-time posture updates.
-    """
-    await websocket.accept()
-    dashboard_clients.add(websocket)
-    logger.info(f"📊 Dashboard client connected (total: {len(dashboard_clients)})")
-
-    # Send latest data immediately if available
-    if latest_response is not None:
-        try:
-            await websocket.send_json(latest_response)
-        except Exception:
-            pass
-
-    try:
-        while True:
-            # Keep connection alive; dashboard is read-only
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        dashboard_clients.discard(websocket)
-        logger.info(f"📊 Dashboard client disconnected (total: {len(dashboard_clients)})")
-    except Exception:
-        dashboard_clients.discard(websocket)
-
-
 # ── Entry Point ─────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+    import logging as _logging
+    # Silence the noisy per-request access logs (polling every 200ms = 5 lines/sec)
+    _logging.getLogger("uvicorn.access").setLevel(_logging.WARNING)
     logger.info("🚀 Starting PoseGuide Backend Server")
-    uvicorn.run("main:app", host=HOST, port=PORT, reload=True)
+    logger.info("📖 Swagger UI  → http://localhost:8000/docs")
+    logger.info("📡 Latest data → GET  http://localhost:8000/api/latest")
+    logger.info("🧪 Test input  → POST http://localhost:8000/api/sensor-data")
+    uvicorn.run("main:app", host=HOST, port=PORT, reload=True,
+                log_config=None)  # use our own logging config above

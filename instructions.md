@@ -81,37 +81,202 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
-## 3. Hardware Setup (ESP32)
+## 3. Hardware Setup (ESP32 + Dual MPU6050)
 
-### Install Required Libraries in Arduino IDE:
-1. Open **Arduino IDE → Library Manager** (Ctrl+Shift+I)
-2. Search and install:
-   - **ArduinoWebsockets** by Gil Maimon
-   - **ArduinoJson** by Benoit Blanchon (v7+)
-   - **Adafruit ADS1X15** by Adafruit
-   - **MadgwickAHRS** by Arduino
+### Step 1 — Install ESP32 Board Support in Arduino IDE
 
-### Install ESP32 Board Support:
-1. Open **Arduino IDE → File → Preferences**
-2. Add this URL to "Additional Board Manager URLs":
+1. **File → Preferences** → paste into "Additional Board Manager URLs":
    ```
    https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
    ```
-3. Open **Tools → Board → Board Manager** → Search "ESP32" → Install
-4. Select board: **ESP32 Dev Module**
+2. **Tools → Board → Board Manager** → search "ESP32" → Install **esp32 by Espressif Systems**
+3. **Tools → Board → ESP32 Dev Module**
+4. **Tools → Port** → select the COM port your ESP32 is on
 
-### Configure and Upload:
-1. Open `Hardware/posture_sensor.ino` in Arduino IDE
-2. Edit `Hardware/config.h`:
+### Step 2 — Install Required Libraries
+
+Open **Sketch → Include Library → Manage Libraries** and install:
+
+| Library | Author | Used for |
+|---------|--------|----------|
+| **ArduinoJson** | Benoit Blanchon | JSON building/parsing |
+| **Adafruit ADS1X15** | Adafruit | Flex sensor (ADS1115) |
+| **MadgwickAHRS** | Arduino | Sensor fusion |
+
+> `Wire.h`, `WiFi.h`, `HTTPClient.h` are built into the ESP32 board package — no install needed.
+
+---
+
+### Step 3 — Wire the MPU6050 Sensors
+
+Both MPUs share the same 4-wire I2C bus. The **AD0 pin** sets the address:
+
+```
+      ESP32                MPU #1 (Torso)       MPU #2 (Neck)
+      ─────                ──────────────       ─────────────
+      3.3V  ───────────────  VCC          ───── VCC
+      GND   ───────────────  GND          ───── GND
+      GPIO21 (SDA) ────────  SDA          ───── SDA
+      GPIO22 (SCL) ────────  SCL          ───── SCL
+      GND   ───────────────  AD0                              ← address 0x68
+      3.3V  ──────────────────────────────────  AD0           ← address 0x69
+```
+
+> ⚠️ **Use 3.3V — NOT 5V.** MPU6050 is a 3.3V sensor. 5V will damage it.
+
+| Sensor | Location | AD0 pin | I2C Address |
+|--------|----------|---------|-------------|
+| MPU #1 | T4 (lower back / torso) | → GND   | **0x68** |
+| MPU #2 | C7 (neck / upper back)  | → 3.3V  | **0x69** |
+
+#### On a breadboard (2 separate breadboards):
+
+```
+  Breadboard 1 (MPU #1 — Torso)    Breadboard 2 (MPU #2 — Neck)
+  ┌─────────────────┐               ┌─────────────────┐
+  │  MPU6050        │               │  MPU6050        │
+  │  VCC → 3.3V     │               │  VCC → 3.3V     │
+  │  GND → GND      │               │  GND → GND      │
+  │  SDA → GPIO 21  │               │  SDA → GPIO 21  │
+  │  SCL → GPIO 22  │               │  SCL → GPIO 22  │
+  │  AD0 → GND      │               │  AD0 → 3.3V     │
+  └─────────────────┘               └─────────────────┘
+```
+
+---
+
+### Step 4 — Test the Sensors (mpu6050_test.ino)
+
+**Upload `Hardware/mpu6050_test.ino`** — no WiFi needed, Wire.h only.
+
+```
+Arduino IDE → File → Open → Hardware/mpu6050_test.ino → Upload
+```
+
+Open **Serial Monitor at 115200 baud**. You should see:
+
+```
+[I2C] Scanning bus...
+      0x68 | Found  ← MPU6050 #1 (AD0=GND)  ✅
+      0x69 | Found  ← MPU6050 #2 (AD0=3.3V) ✅
+      Found 2 device(s)
+
+[T=5s]
+  TORSO (0x68)  Pitch= +3.21°  Roll= -1.05°
+    Accel: X=+0.056g  Y=-0.018g  Z=+0.998g
+    Gyro:  X= +0.31°/s  Y= -0.12°/s  Z= +0.08°/s
+
+  NECK  (0x69)  Pitch= +5.11°  Roll= +2.30°
+    Accel: X=+0.089g  Y=+0.040g  Z=+0.995g
+    Gyro:  X= -0.22°/s  Y= +0.18°/s  Z= -0.05°/s
+```
+
+**What to check:**
+- Tilt the sensor forward/backward → **Pitch** should change
+- Tilt sideways → **Roll** should change
+- Accel Z should be near **+1.0g** when sensor is flat on the table
+- Both sensors should show different readings when tilted independently
+
+#### I2C Scan Troubleshooting:
+
+| Scan result | Cause | Fix |
+|-------------|-------|-----|
+| No devices found | VCC or GND not connected | Check 3.3V and GND wires |
+| Only 0x68 found | MPU #2 AD0 not at 3.3V | Connect AD0 of MPU #2 to 3.3V |
+| Only 0x69 found | MPU #1 AD0 not at GND | Connect AD0 of MPU #1 to GND |
+| Both at 0x68 | Both AD0 pins to GND | One AD0 must go to 3.3V |
+| All zeros in readings | SDA/SCL swapped | Swap GPIO 21 and 22 |
+
+---
+
+### Step 5 — Test the Flex Sensor (flex_sensor_test.ino)
+
+> **No extra library needed.** Uses ESP32's built-in 12-bit ADC directly.
+
+The flex sensor is a variable resistor — connect it via a **voltage divider** to **GPIO 34** (ADC1, WiFi-safe).
+
+#### Wiring — Voltage Divider:
+
+```
+  3.3V ──── Flex Sensor leg 1
+            Flex Sensor leg 2 ──┬──── GPIO 34  (ADC input)
+                                │
+                             10kΩ resistor
+                                │
+  GND ────────────────────────────
+```
+
+> ⚠️ **Use GPIO 34 only** (or GPIO 35/36/39). These are ADC1 pins and work alongside WiFi.
+> Do NOT use GPIO 0, 2, 4, 12–15, 25–27 (ADC2 — conflicts with WiFi).
+
+> ⚠️ **Use 3.3V — NOT 5V.** GPIO 34 max input is 3.3V.
+
+#### Upload and test:
+
+```
+Arduino IDE → File → Open → Hardware/flex_sensor_test.ino → Upload
+```
+
+Open **Serial Monitor at 115200 baud**. You should see:
+
+```
+[T=   2s]  Raw: 3187   Voltage: 2.568V   Bend:   0.0%   [░░░░░░░░░░░░░░]  FLAT
+[T=   3s]  Raw: 2100   Voltage: 1.692V   Bend:  60.4%   [████████████░░]  MODERATE BEND
+[T=   4s]  Raw: 1380   Voltage: 1.112V   Bend: 100.0%   [██████████████]  FULLY BENT ⚠️
+```
+
+**What to check:**
+- Bend the sensor → bar fills up, value decreases ✅
+- Release flat → bar empties, value increases ✅
+- If nothing changes → check voltage divider wiring
+
+#### Calibration (run once):
+
+After bending/flattening a few times, note the `[CAL]` line printed every 10s:
+```
+Session max (keep flat) : 3187  → use as FLAT_RAW
+Session min (bend fully): 1380  → use as BENT_RAW
+```
+Update in `flex_sensor_test.ino`:
+```cpp
+int FLAT_RAW = 3187;   // ← your flat value
+int BENT_RAW = 1380;   // ← your bent value
+```
+
+#### Flex Sensor Troubleshooting:
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Raw value stuck at 0 | GPIO not connected | Check both legs of flex sensor wired |
+| Raw value stuck at 4095 | No pull-down resistor | Add 10kΩ between GPIO 34 and GND |
+| Value doesn't change when bending | Sensor wired in wrong direction | Swap flex sensor legs |
+| Very noisy / jumping values | ESP32 ADC noise (normal) | Sketch already averages 32 samples |
+| Bar always 100% | FLAT/BENT values swapped | Swap FLAT_RAW and BENT_RAW |
+
+---
+
+### Step 6 — Upload WiFi Test (wifi_test.ino)
+
+1. Find your PC's IP on the hotspot (run `ipconfig` → Wireless LAN adapter IPv4)
+2. Edit `wifi_test.ino`:
    ```cpp
-   #define WIFI_SSID       "YourWiFiName"
-   #define WIFI_PASSWORD   "YourWiFiPassword"
-   #define SERVER_HOST     "192.168.x.x"  // Your PC's local IP address
+   const char* WIFI_SSID     = "YourHotspotName";
+   const char* WIFI_PASSWORD = "YourPassword";
+   const char* BACKEND_IP    = "192.168.X.X";   // your PC's IP
    ```
-3. Connect ESP32 via USB
-4. Select the correct **COM port** under Tools
-5. Click **Upload**
-6. Open **Serial Monitor** (115200 baud) to see connection status
+3. Upload and open Serial Monitor at 115200 baud
+4. Should print `✅ Connected!` then `HTTP 200` for each POST
+
+---
+
+### Step 7 — Upload Main Firmware (posture_sensor.ino)
+
+> Do this **after** all component tests pass (MPU + flex + WiFi).
+
+1. Open `Hardware/posture_sensor.ino`
+2. Set credentials in `Hardware/config.h`
+3. Update calibration values from `flex_sensor_test.ino` results
+4. Upload → open Serial Monitor
 
 ### ⚠️ How to find your PC's backend IP address
 

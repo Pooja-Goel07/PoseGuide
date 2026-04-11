@@ -48,8 +48,26 @@ const int   BACKEND_PORT = 8000;
 #define MPU_REG_PWR_MGMT_1   0x6B
 #define MPU_REG_ACCEL_XOUT_H 0x3B
 
-// ── Flex sensor (hardcoded — not connected) ──────────────
-const float FLEX_VALUE = 30.0f;  // neutral spine curvature
+// ── Flex sensor (GPIO 34 — voltage divider with 1kΩ) ──────
+#define FLEX_PIN      34
+// Calibration: run flex_sensor_test.ino first, note min/max, update here
+const int FLEX_FLAT   = 370;   // ADC value when sensor is FLAT (not bent)
+const int FLEX_BENT   =  60;   // ADC value when sensor is FULLY BENT
+
+// ── Mounting Orientation Offsets ────────────────────────────
+// The MPU measures angle from horizontal (flat = 0°).
+// If you mount the sensor VERTICALLY on your back:
+//   - spine faces forward  → set offsets to -90.0
+//   - spine faces backward → set offsets to +90.0
+// If sensor is FLAT (horizontal) on a table → set to 0.0
+//
+// HOW TO CALIBRATE:
+//   1. Sit in perfect upright posture with sensors mounted
+//   2. Note the pitch values printed in Serial Monitor
+//   3. Set TORSO_PITCH_OFFSET = -(that pitch value)
+//      e.g. if it prints "-88.5°", set offset = 88.5
+const float TORSO_PITCH_OFFSET = 90.0f;  // degrees to subtract from raw torso pitch
+const float NECK_PITCH_OFFSET  = 90.0f;  // degrees to subtract from raw neck pitch
 
 // ── Smoothing ───────────────────────────────────────────────
 #define SMOOTH_N  4   // running average over N readings
@@ -67,21 +85,43 @@ SmoothBuf torsoSmooth, neckSmooth;
 #define POST_INTERVAL  300    // ms between POSTs (matches frontend 200ms poll)
 #define LED_PIN        2
 
+// ── Buzzer ───────────────────────────────────────────────────
+// Active buzzer: GPIO 25 → 100Ω resistor → Buzzer + → GND
+// (Or direct if your buzzer is rated 3.3V)
+#define BUZZER_PIN          25    // GPIO 25 — change if needed
+#define BUZZ_TORSO_THRESH   40.0f // ° — torso pitch for "very bad" alert
+#define BUZZ_NECK_THRESH    35.0f // ° — neck pitch for "very bad" alert
+#define BUZZ_HOLD_MS        5000  // must stay bad for this long before buzzing
+#define BUZZ_COOLDOWN_MS    10000 // minimum gap between buzz alerts
+
 // ── Globals ──────────────────────────────────────────────────
 bool torsoOk = false, neckOk = false;
 unsigned long lastPost = 0;
 int postCount = 0;
+unsigned long badPostureStart = 0;   // when bad posture began
+unsigned long lastBuzzTime    = 0;   // when we last buzzed
+bool wasInBadPosture = false;
+int lastFlexRaw = 0;   // raw ADC for Serial debug
 
 // ─────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(500);
   pinMode(LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);  // buzzer off
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
 
+  // ADC for flex sensor
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);  // 0–3.3V range
+
   printBanner();
+
+  // Scan I2C bus — shows exactly what's connected
+  scanI2C();
 
   // Init MPUs
   torsoOk = initMPU(MPU_TORSO, "Torso (0x68)");
@@ -129,30 +169,104 @@ void loop() {
     nRoll  = neckSmooth.avgRoll();
   }
 
+  // ── Apply mounting orientation offset ────────────────────
+  // Raw pitch from accel assumes flat=0°.
+  // Subtract offset so upright posture = ~0° when worn vertically.
+  float tPitchAdj = tPitch - TORSO_PITCH_OFFSET;
+  float nPitchAdj = nPitch - NECK_PITCH_OFFSET;
+
+  // ── Read flex sensor ─────────────────────────────────────
+  float flexPct = readFlex();
+
   // ── POST to backend ──────────────────────────────────────
   postCount++;
-  bool ok = postData(tPitch, tRoll, nPitch, nRoll);
+  bool ok = postData(tPitchAdj, tRoll, nPitchAdj, nRoll, flexPct);
 
   // Print to Serial Monitor
   Serial.printf("[#%d | T=%lus]\n", postCount, now / 1000);
-  Serial.printf("  TORSO  pitch=%+6.2f°  roll=%+6.2f°\n", tPitch, tRoll);
-  Serial.printf("  NECK   pitch=%+6.2f°  roll=%+6.2f°\n", nPitch, nRoll);
-  Serial.printf("  FLEX   %.1f (hardcoded)\n", FLEX_VALUE);
+  Serial.printf("  TORSO  raw=%+6.2f°  adjusted=%+6.2f°  roll=%+6.2f°\n", tPitch, tPitchAdj, tRoll);
+  Serial.printf("  NECK   raw=%+6.2f°  adjusted=%+6.2f°  roll=%+6.2f°\n", nPitch, nPitchAdj, nRoll);
+  Serial.printf("  FLEX   %.1f%% (raw ADC=%d)\n", flexPct, lastFlexRaw);
   Serial.printf("  POST   %s\n\n", ok ? "✅ HTTP 200" : "❌ FAILED");
 
+
+  // ── Buzzer alert ─────────────────────────────────────────
+  checkBuzzer(tPitchAdj, nPitchAdj, now);
+
   digitalWrite(LED_PIN, ok ? HIGH : LOW);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Buzz if posture is critically bad for more than BUZZ_HOLD_MS
+void checkBuzzer(float tPitch, float nPitch, unsigned long now) {
+  bool isBad = (abs(tPitch) > BUZZ_TORSO_THRESH) || (abs(nPitch) > BUZZ_NECK_THRESH);
+
+  if (isBad) {
+    if (!wasInBadPosture) {
+      badPostureStart = now;
+      wasInBadPosture = true;
+    }
+    if ((now - badPostureStart >= BUZZ_HOLD_MS) &&
+        (now - lastBuzzTime   >= BUZZ_COOLDOWN_MS)) {
+      lastBuzzTime = now;
+      Serial.println("  [BUZZ] ⚠️  Bad posture alert!");
+      buzzAlert();
+    }
+  } else {
+    wasInBadPosture = false;  // reset when posture improves
+  }
+}
+
+// 3 short beeps
+void buzzAlert() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(150);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(100);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Read flex sensor: 8-sample average, return 0–100% bend
+float readFlex() {
+  long sum = 0;
+  for (int i = 0; i < 8; i++) {
+    sum += analogRead(FLEX_PIN);
+    delayMicroseconds(100);
+  }
+  lastFlexRaw = sum / 8;
+  float pct = (float)(lastFlexRaw - FLEX_FLAT) / (float)(FLEX_BENT - FLEX_FLAT) * 100.0f;
+  if (pct < 0.0f) pct = 0.0f;
+  if (pct > 100.0f) pct = 100.0f;
+  return pct;
 }
 
 // ─────────────────────────────────────────────────────────────
 void readMPU(uint8_t addr, float& pitch, float& roll) {
   Wire.beginTransmission(addr);
   Wire.write(MPU_REG_ACCEL_XOUT_H);
-  Wire.endTransmission(false);
-  Wire.requestFrom((uint8_t)addr, (uint8_t)6);  // 6 bytes = accel only
+  uint8_t err = Wire.endTransmission(true);  // true = release bus!
+  if (err != 0) {
+    Serial.printf("  [I2C ERR] endTransmission=%d for 0x%02X\n", err, addr);
+    return;
+  }
+
+  uint8_t got = Wire.requestFrom((uint8_t)addr, (uint8_t)6);
+  if (got != 6) {
+    Serial.printf("  [I2C ERR] 0x%02X returned %d bytes (need 6)\n", addr, got);
+    while (Wire.available()) Wire.read();
+    return;
+  }
 
   int16_t ax = (Wire.read() << 8) | Wire.read();
   int16_t ay = (Wire.read() << 8) | Wire.read();
   int16_t az = (Wire.read() << 8) | Wire.read();
+
+  if (ax == -1 && ay == -1 && az == -1) {
+    Serial.printf("  [I2C ERR] 0x%02X all 0xFF - not responding!\n", addr);
+    return;
+  }
 
   float axg = ax / 16384.0f;
   float ayg = ay / 16384.0f;
@@ -163,7 +277,7 @@ void readMPU(uint8_t addr, float& pitch, float& roll) {
 }
 
 // ─────────────────────────────────────────────────────────────
-bool postData(float tPitch, float tRoll, float nPitch, float nRoll) {
+bool postData(float tPitch, float tRoll, float nPitch, float nRoll, float flexPct) {
   StaticJsonDocument<256> doc;
 
   JsonObject torso = doc.createNestedObject("torso");
@@ -176,7 +290,7 @@ bool postData(float tPitch, float tRoll, float nPitch, float nRoll) {
   neck["roll"]  = roundf(nRoll  * 100) / 100.0f;
   neck["yaw"]   = 0.0f;
 
-  doc["flex_value"] = FLEX_VALUE;
+  doc["flex_value"] = roundf(flexPct * 10) / 10.0f;
   doc["timestamp"]  = (long)millis();
 
   String payload;
@@ -196,19 +310,53 @@ bool postData(float tPitch, float tRoll, float nPitch, float nRoll) {
 // ─────────────────────────────────────────────────────────────
 bool initMPU(uint8_t addr, const char* label) {
   Wire.beginTransmission(addr);
-  Wire.write(MPU_REG_PWR_MGMT_1);
-  if (Wire.endTransmission(false) != 0) {
-    Serial.printf("[MPU] ❌ %s not found\n", label);
+  uint8_t err = Wire.endTransmission(true);  // true = release bus
+  if (err != 0) {
+    Serial.printf("[MPU] ❌ %s not found (err=%d)\n", label, err);
     return false;
   }
   // Wake up
   Wire.beginTransmission(addr);
   Wire.write(MPU_REG_PWR_MGMT_1);
   Wire.write(0x00);
-  Wire.endTransmission();
+  Wire.endTransmission(true);
   delay(100);
-  Serial.printf("[MPU] ✅ %s ready\n", label);
-  return true;
+
+  // Verify read works
+  Wire.beginTransmission(addr);
+  Wire.write(MPU_REG_ACCEL_XOUT_H);
+  Wire.endTransmission(true);
+  uint8_t got = Wire.requestFrom((uint8_t)addr, (uint8_t)6);
+  while (Wire.available()) Wire.read();  // flush
+
+  if (got == 6) {
+    Serial.printf("[MPU] ✅ %s ready (read OK)\n", label);
+    return true;
+  } else {
+    Serial.printf("[MPU] ⚠️  %s found but read failed (%d bytes)\n", label, got);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+void scanI2C() {
+  Serial.println("\n[I2C] Scanning bus...");
+  int found = 0;
+  for (uint8_t a = 1; a < 127; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission(true) == 0) {
+      found++;
+      const char* h = "";
+      if (a == 0x68) h = "  <-- MPU6050 Torso";
+      if (a == 0x69) h = "  <-- MPU6050 Neck";
+      Serial.printf("  0x%02X | Found%s\n", a, h);
+    }
+  }
+  if (found == 0)
+    Serial.println("  NO DEVICES FOUND! Check VCC/GND/SDA/SCL.");
+  else
+    Serial.printf("  %d device(s) on bus\n", found);
+  Serial.println();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -244,7 +392,8 @@ void printBanner() {
   Serial.println("════════════════════════════════════════════════");
   Serial.println("  Torso MPU: 0x68 (AD0 → GND)");
   Serial.println("  Neck  MPU: 0x69 (AD0 → 3.3V)");
-  Serial.println("  Flex sensor: hardcoded at 30.0");
+  Serial.println("  Flex sensor: GPIO 34 (1kΩ divider)");
+  Serial.printf("  Buzzer: GPIO %d\n", BUZZER_PIN);
   Serial.printf("  POST interval: %dms\n", POST_INTERVAL);
   Serial.println("════════════════════════════════════════════════");
   Serial.println();

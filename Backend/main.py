@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import HOST, PORT, ALLOWED_ORIGINS
 from models import SensorPacket, PostureResponse
 from posture_classifier import classify_posture
+import database as db
 
 # ── Logging ─────────────────────────────────────────────
 logging.basicConfig(
@@ -53,17 +54,35 @@ latest_response: dict | None = None
 dashboard_clients: Set[WebSocket] = set()  # kept for ESP32 live-streaming path
 
 
+@app.on_event("startup")
+async def startup():
+    db.init()
+    logger.info("💾 SQLite database ready")
+
+
 # ── Helper ──────────────────────────────────────────────
 def process_sensor_packet(packet: SensorPacket) -> dict:
-    """Classify posture, cache result, broadcast to any WS dashboard clients."""
+    """Classify posture, cache result, save to DB."""
     global latest_response
     classification = classify_posture(packet)
     response = PostureResponse(sensor_data=packet, classification=classification)
     result = json.loads(response.model_dump_json())
     latest_response = result
 
-    # Optionally broadcast to WebSocket dashboard clients (live hardware path)
-    # Frontend can also just poll /api/latest instead
+    # Persist to SQLite for analytics
+    try:
+        db.insert_reading(
+            score=classification.score,
+            condition=classification.condition.value,
+            torso_pitch=abs(packet.torso.pitch),
+            torso_roll=abs(packet.torso.roll),
+            neck_pitch=abs(packet.neck.pitch),
+            neck_roll=abs(packet.neck.roll),
+            flex_value=packet.flex_value,
+        )
+    except Exception as e:
+        logger.warning(f"DB insert failed: {e}")
+
     return result
 
 
@@ -128,6 +147,25 @@ async def post_sensor_data(packet: SensorPacket):
     )
     return result
 
+# ── Analytics Endpoints ─────────────────────────────────
+
+@app.get("/api/analytics/hourly", tags=["Analytics"])
+async def analytics_hourly(hours: int = 8):
+    """Average posture score per hour for the last N hours (bar chart data)."""
+    return db.get_hourly_averages(hours)
+
+
+@app.get("/api/analytics/stats", tags=["Analytics"])
+async def analytics_stats():
+    """Session summary: total readings, good %, average score, duration."""
+    return db.get_session_stats()
+
+
+@app.get("/api/analytics/distribution", tags=["Analytics"])
+async def analytics_distribution():
+    """Posture condition counts for pie chart."""
+    return db.get_condition_distribution()
+
 
 # ── WebSocket: ESP32 Hardware ───────────────────────────
 @app.websocket("/ws/esp32")
@@ -157,6 +195,9 @@ async def esp32_websocket(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     import logging as _logging
+    # Init SQLite
+    db.init()
+    logger.info("💾 SQLite database ready")
     # Silence the noisy per-request access logs (polling every 200ms = 5 lines/sec)
     _logging.getLogger("uvicorn.access").setLevel(_logging.WARNING)
     logger.info("🚀 Starting PoseGuide Backend Server")

@@ -1,0 +1,315 @@
+PROJECT REPORT
+Real-Time Posture Detection and Feedback System
+1. Abstract
+This project presents a Real-Time Posture Detection and Feedback System designed
+to monitor, analyze, and visualize human posture using wearable sensors and a webbased dashboard. The system utilizes two MPU-6050 IMU sensors positioned at the
+upper back (T4 vertebra) and neck (C7 vertebra), along with a flex sensor to measure
+spinal curvature.
+Sensor data is processed using a Madgwick filter to generate stable orientation
+angles (pitch, roll, and yaw), which are transmitted via Wi-Fi using an ESP32
+microcontroller to a FastAPI backend. The backend relays this data in real time to a
+React-based dashboard, where a 3D human model rendered using Three.js
+dynamically replicates the user’s posture through skeletal animation.
+The system provides immediate visual feedback and classifies posture conditions
+such as slouching and forward head posture, enabling users to correct their posture
+intuitively. Designed as a low-cost, wearable, and privacy-preserving solution that
+does not rely on camera-based monitoring, the system is particularly suited for
+students, desk workers, and individuals prone to prolonged poor posture.
+2. Introduction
+2.1 Motivation
+In recent years, poor posture has emerged as a significant health concern, particularly
+among students, software developers, and office professionals who spend prolonged hours
+sitting in front of screens. Extended periods of improper sitting habits often lead to conditions
+such as:
+• Forward head posture, where the neck shifts ahead of the body’s centerline
+• Thoracic hunching (kyphosis), resulting in excessive curvature of the upper back
+• Lower back strain, caused by inadequate lumbar support
+Over time, these issues can contribute to chronic musculoskeletal disorders, reduced
+productivity, fatigue, and long-term spinal complications.
+Existing solutions—such as ergonomic chairs, posture correction belts, or awareness
+campaigns—primarily rely on continuous user attention and discipline. However, in realworld scenarios, individuals tend to lose awareness of their posture during focused tasks.
+To address this limitation, there is a need for a real-time, automated, and intelligent posture
+monitoring system that operates passively and provides immediate feedback. This project
+aims to bridge that gap by developing a system that continuously tracks posture and delivers
+intuitive visual feedback, enabling users to self-correct naturally without conscious effort.
+2.2 Background
+Human posture can be effectively analyzed by measuring the orientation and movement
+of different body segments. This project leverages Inertial Measurement Units (IMUs),
+specifically the MPU-6050 sensor, which integrates:
+• A 3-axis accelerometer to measure linear acceleration and gravity direction
+• A 3-axis gyroscope to measure angular velocity and rotational motion
+Individually, these sensors have limitations—accelerometers are sensitive to noise and
+movement, while gyroscopes suffer from drift over time. To overcome these
+challenges, sensor fusion algorithms, such as the Madgwick filter, are used to combine
+both data sources and produce stable and accurate orientation estimates.
+The output of this fusion process is expressed in terms of:
+• Pitch (forward/backward tilt)
+• Roll (side-to-side tilt)
+• Yaw (rotational orientation)
+These parameters provide a comprehensive representation of body posture in threedimensional space.
+To enhance user understanding and engagement, the system incorporates real-time 3D
+visualization using Three.js. A pre-rigged human model with a skeletal structure is
+rendered on a web dashboard, where individual bones are dynamically rotated based
+on sensor data. This creates a live digital representation of the user’s posture, making
+deviations immediately visible and intuitive.
+Together, the integration of IMU-based sensing and 3D visualization enables an
+effective and interactive approach to posture monitoring and correction.
+Three.js is a JavaScript-based 3D rendering library that supports skeletal animation.
+Human body models exported from tools such as Mixamo (Adobe) include pre-rigged
+skeletons with well-defined bones. By programmatically updating the rotation of these
+bones using orientation angles obtained from the IMU sensors, the 3D model can
+accurately replicate the user’s posture in real time at interactive frame rates.
+3. Human Spine Reference
+3.1 Structure of the Human Spine
+The human spine, also known as the vertebral column, provides structural support, enables
+flexibility, and protects the spinal cord. It is divided into three primary regions:
+• Cervical Spine (C1–C7):
+Located in the neck region, responsible for head support and mobility.
+• Thoracic Spine (T1–T12):
+Located in the upper and mid-back, responsible for stability and posture
+maintenance.
+• Lumbar Spine (L1–L5):
+Located in the lower back, responsible for load-bearing and support.
+3.2 Posture-Sensitive Regions
+Certain regions of the spine are more indicative of posture deviations:
+• C7 Vertebra:
+A prominent landmark at the base of the neck, used to detect forward head
+posture.
+• T4 Vertebra:
+Located between the shoulder blades, commonly associated with slouching or
+thoracic hunching.
+3.3 Relevance to System Design
+These anatomical landmarks are critical for posture analysis, as they represent key
+points where significant deviations occur during improper sitting or standing.
+4. Problem Statement
+The objective of this project is to design and implement a real-time posture monitoring
+and feedback system that can accurately detect and visualize human posture using
+wearable sensors and a web-based interface.
+The system is required to:
+• Continuously monitor posture:
+Capture real-time orientation and movement of the upper body using wearable IMU
+sensors and a flex sensor.
+• Enable real-time data transmission:
+Transmit sensor data wirelessly with minimal latency to ensure immediate processing
+and response.
+• Provide intuitive visualization:
+Display the user’s posture on a web-based dashboard using a dynamically updated
+3D human model, allowing easy interpretation of posture.
+• Detect posture deviations:
+Identify common posture issues such as slouching, forward head posture, and lateral
+leaning using predefined thresholds or classification logic.
+• Deliver feedback mechanisms:
+Provide real-time feedback (visual alerts and potential hardware-based feedback) to
+help users correct their posture.
+The system should operate efficiently in both sitting and standing conditions and should be
+scalable for future enhancements such as machine learning-based classification and
+wearable portability.
+5. System Architecture
+5.1 Overview
+The system follows a modular architecture consisting of sensor acquisition, data
+processing, communication, and visualization layers. It enables seamless real-time data
+flow from wearable hardware to an interactive dashboard.
+5.2 Architecture Flow
+5.3 Component Description
+• Sensors (IMU + Flex Sensor):
+Two IMU sensors capture orientation (pitch, roll, yaw), while the flex sensor
+measures spinal curvature.
+• ESP32 Microcontroller:
+Collects raw sensor data, performs initial processing (sensor fusion), and transmits
+structured data over Wi-Fi.
+• Wi-Fi Communication (WebSocket):
+Enables low-latency, real-time data transmission between the hardware and backend
+system.
+• FastAPI Backend:
+Acts as an intermediary layer that receives sensor data, performs posture
+classification, and broadcasts processed data to the frontend.
+• React Dashboard:
+Provides a user interface for real-time monitoring, displaying posture status, metrics,
+and alerts.
+• Three.js 3D Model:
+Renders a human avatar whose skeletal structure dynamically updates based on
+sensor data, visually representing the user’s posture.
+5.4 Key Characteristics of the Architecture
+• Real-time performance: Ensures minimal latency between sensor input and
+visualization
+• Scalability: Allows addition of more sensors or users
+• Modularity: Each component (hardware, backend, frontend) can be developed and
+improved independently
+• Interactivity: Provides immediate and intuitive feedback through 3D visualization
+6. Hardware Components
+6.1 Component Overview
+The hardware subsystem of the proposed system consists of a set of wearable sensors, a
+microcontroller for data acquisition and processing, and supporting components for signal
+conditioning and mounting.
+Component Purpose
+ESP32 Acts as the main microcontroller with built-in Wi-Fi for data processing
+and transmission
+MPU-6050 (×2) Measures orientation (pitch, roll, yaw) of the upper back and neck
+Flex Sensor Measures the degree of spinal curvature (bending)
+Component Purpose
+ADS1115
+(Optional) Provides high-resolution analog-to-digital conversion for the flex sensor
+Elastic Band /
+Vest Used to securely mount sensors on the human body
+6.2 Description of Components
+• ESP32 Microcontroller:
+The ESP32 serves as the central processing unit of the system. It reads data from all
+sensors, performs initial processing (such as sensor fusion), and transmits the
+processed data wirelessly to the backend server using Wi-Fi.
+• MPU-6050 IMU Sensors:
+Two MPU-6050 sensors are used to capture the orientation of different body
+segments. These sensors provide accelerometer and gyroscope data, which are
+fused to compute stable orientation angles.
+• Flex Sensor:
+The flex sensor is placed along the spine to measure bending. Its resistance changes
+based on curvature, allowing the system to estimate the severity of spinal deviation.
+• ADS1115 ADC Module (Optional):
+Since the flex sensor outputs analog signals, the ADS1115 is used to convert these
+signals into high-resolution digital values for accurate processing.
+• Elastic Mounting Mechanism:
+An elastic band or wearable vest is used to position the sensors securely at specific
+anatomical locations (C7 and T4), ensuring consistent and reliable readings.
+• 8. Sensor Placement
+• 8.1 Overview
+• Accurate sensor placement is essential for reliable posture detection. In this
+system, sensors are positioned based on anatomically significant regions of
+the spine (as described in Section 3) to capture meaningful posture-related
+movements.
+•
+• 8.2 Placement Details
+• MPU #1 (T4 – Upper Back):
+Mounted at the T4 region, this sensor acts as the torso reference. It captures
+the overall orientation of the upper body. The pitch angle is used to detect
+slouching, while the roll angle indicates lateral leaning.
+• MPU #2 (C7 – Neck Base):
+Positioned at the C7 vertebra, this sensor measures neck orientation relative to
+the torso. The difference between this sensor and the torso sensor helps
+identify forward head posture and neck tilt.
+• Flex Sensor (Spine Curvature):
+Placed along the upper spine, this sensor measures bending curvature and
+provides additional confirmation of posture deviations, especially during
+gradual slouching.
+•
+8.3 Placement Justification
+• This sensor configuration enables the system to:
+• Capture both absolute torso orientation and relative neck movement
+• Detect multiple posture conditions with improved accuracy
+• Enhance reliability by combining angle-based and curvature-based
+measurements
+•
+9. Implementation
+9.1 Data Flow
+The system operates through a real-time data pipeline that ensures continuous monitoring
+and visualization of posture:
+1. Sensor Data Acquisition:
+The IMU sensors and flex sensor continuously collect motion and curvature data
+from the user’s body.
+2. Sensor Fusion Processing:
+The Madgwick filter is applied to combine accelerometer and gyroscope data,
+producing stable orientation angles (pitch, roll, yaw).
+3. Data Transmission:
+The ESP32 microcontroller transmits the processed data to the backend server via
+Wi-Fi using WebSocket communication.
+4. Backend Processing:
+The FastAPI server receives the data, performs posture classification based on
+predefined thresholds, and prepares it for visualization.
+5. Visualization:
+The React dashboard receives the processed data and updates the 3D model in real
+time, reflecting the user’s current posture.
+9.2 Sensor Fusion
+Sensor fusion is a key component of the system, ensuring accurate and stable orientation
+estimation.
+• Combines data from the accelerometer and gyroscope
+• Eliminates noise from accelerometer readings
+• Reduces drift errors from gyroscope data
+• Produces smooth and reliable orientation values
+The Madgwick filter is used due to its efficiency and suitability for real-time embedded
+systems.
+9.3 Posture Classification
+Posture is classified using threshold-based logic derived from sensor readings. The system
+evaluates the orientation angles and identifies posture conditions as follows:
+Condition Sensor Signal Threshold
+Good Posture All angles near neutral < 10°
+Slouching (Thoracic Hunch) Torso pitch (MPU #1) > 25°
+Forward Head Posture Neck pitch (relative) > 20°
+Lateral Lean Torso roll (MPU #1) > 15°
+These thresholds enable real-time detection of posture deviations and trigger appropriate
+feedback mechanisms.
+10. Software Stack
+10.1 Backend
+The backend of the system is implemented using Python with the FastAPI framework. It is
+responsible for handling real-time data communication, processing incoming sensor data,
+and managing posture classification logic.
+• Enables asynchronous and high-performance server operations
+• Supports real-time communication using WebSockets
+• Processes incoming sensor data and broadcasts it to connected clients
+10.2 Frontend
+The frontend is developed using React, which provides a dynamic and responsive user
+interface for real-time posture monitoring.
+• Displays live posture data in an interactive dashboard
+• Manages application state efficiently
+• Ensures smooth updates with minimal latency
+10.3 3D Visualization
+The system uses Three.js for rendering a 3D human model with skeletal animation.
+• Loads a pre-rigged human model with a bone structure
+• Dynamically updates bone rotations based on sensor data
+• Provides an intuitive visual representation of posture
+11. Dashboard Features
+The web-based dashboard provides a comprehensive and interactive interface for
+monitoring posture in real time. Key features include:
+• Live posture visualization: Displays continuous updates of the user’s posture
+• 3D animated human model: Represents posture using a dynamically updated
+skeletal model
+• Posture classification display: Shows current posture status (e.g., good, slouching,
+forward head)
+• Score tracking: Provides a numerical posture score based on deviation from ideal
+posture
+• Real-time updates: Ensures minimal delay between sensor input and visual output
+12. Feedback System
+The system incorporates feedback mechanisms to help users correct their posture:
+• Visual alerts:
+The dashboard highlights posture issues using color indicators and alert messages.
+• Future scope – Haptic feedback:
+A vibration motor can be integrated into the wearable system to provide immediate
+physical feedback when poor posture is detected.
+13. Results
+The system demonstrates effective real-time performance and accurate posture detection:
+• Low latency:
+End-to-end latency of approximately 30–50 milliseconds ensures real-time
+responsiveness.
+• Accurate posture detection:
+The combination of IMU sensors and sensor fusion provides reliable orientation
+measurements.
+• Smooth visualization:
+The 3D model updates seamlessly, providing a realistic and intuitive representation
+of posture.
+14. Future Work
+The system can be further enhanced with the following improvements:
+• Integration of additional sensors for full-body posture tracking (e.g., hips and lower
+back)
+• Implementation of machine learning models for personalized and adaptive posture
+classification
+• Development of a mobile application for remote monitoring and notifications
+• Addition of a haptic feedback system for real-time physical alerts
+• Support for multi-user monitoring in environments such as classrooms or offices
+15. Conclusion
+This project successfully demonstrates a low-cost, real-time, and privacy-preserving posture
+monitoring system using two MPU-6050 IMU sensors, one flex sensor, and an ESP32
+microcontroller. The system wirelessly streams live orientation data to a Python-based
+WebSocket server which relays it to a React web dashboard featuring a 3D animated human
+model. The skeleton of the 3D figure replicates the wearer's upper-body posture in real time
+by directly mapping sensor angles to corresponding bone rotations in Three.js.
+The two-sensor configuration was found to be fully sufficient for upper body posture
+replication. MPU #1 at the thoracic spine (T4) captures the dominant posture signal — the
+degree and direction of torso lean and hunch. MPU #2 at the neck (C7) adds independent
+head and neck tracking. The flex sensor provides supplementary information about spinal
+curvature severity that pure angle measurements may miss during slow, gradual bends.
+Together, these three signals comprehensively describe upper body posture and drive three
+key bones in the 3D model: the thoracic spine bone, the neck bone, and a curvature blend
+shape.
+The Madgwick sensor fusion filter proved effective at producing stable, drift-free Euler angles
+from the raw IMU data, operating reliably at 50Hz within the ESP32's processing capacity. The
+Wi-Fi WebSocket pipeline introduces end-to-end latency of approximately 30–50ms on a local
+network, which is imperceptible to the human eye and fully sufficient for real-time visual
+feedback.
+

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🦴 PoseGuide
+# PoseGuide
 
 ### Real-Time Posture Detection & Feedback System
 
@@ -10,7 +10,6 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi)](https://fastapi.tiangolo.com)
 [![Three.js](https://img.shields.io/badge/Three.js-r163-000000?logo=threedotjs)](https://threejs.org)
 [![ESP32](https://img.shields.io/badge/ESP32-Arduino-E7352C?logo=espressif)](https://espressif.com)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 </div>
 
@@ -20,16 +19,20 @@
 
 PoseGuide is a complete posture monitoring system that uses wearable IMU sensors to track your upper-body orientation in real time. A 3D human model on a web dashboard replicates your posture, providing immediate visual feedback and intelligent posture classification.
 
+### Hardware Setup
+<!-- Add your hardware image here -->
+![Hardware Setup](assets/hardware.jpg)
+
 ### Key Features
 
-- 🎯 **Real-Time 3D Visualization** — Three.js-rendered human skeleton mirrors your posture
-- 📊 **Posture Score (0–100)** — Continuous scoring with severity-based color coding
-- ⚡ **~30–50ms Latency** — Near-instant feedback from sensor to screen
-- 🧠 **Smart Classification** — Detects slouching, forward head posture, and lateral lean
-- 🔔 **Visual Alerts** — Slide-in notifications for posture deviations
-- 📈 **Analytics Dashboard** — Session stats, hourly trends, posture distribution
-- 🌙 **Premium Dark UI** — Glassmorphism design with smooth micro-animations
-- 🔒 **Privacy-Preserving** — No cameras, no cloud, all data stays local
+- **Real-Time 3D Visualization** — Three.js-rendered human skeleton mirrors your posture
+- **Posture Score (0–100)** — Continuous scoring with severity-based color coding
+- **~30–50ms Latency** — Near-instant feedback from sensor to screen
+- **Smart Classification** — Detects slouching, forward head posture, and lateral lean
+- **Visual Alerts** — Slide-in notifications for posture deviations
+- **Analytics Dashboard** — Session stats, hourly trends, posture distribution
+- **Premium Dark UI** — Glassmorphism design with smooth micro-animations
+- **Privacy-Preserving** — No cameras, no cloud, all data stays local
 
 ---
 

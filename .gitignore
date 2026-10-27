@@ -4,10 +4,17 @@ __pycache__/
 *$py.class
 *.so
 venv/
+.venv/
 .env
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+
+# ── Runtime database (SQLite, auto-created) ─
+Backend/poseguide.db
+Backend/poseguide.db-shm
+Backend/poseguide.db-wal
 
 # ── Node.js ─────────────────────────────────
 node_modules/

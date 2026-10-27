@@ -1,55 +1,73 @@
 """
-PoseGuide – Pydantic Data Models
-Typed schemas for sensor data, posture classification, and API responses.
+PoseGuide - Pydantic data models (3-feature iteration)
+======================================================
+
+Flex sensor removed this iteration -> feature vector is 3-D:
+    [torso_pitch, torso_roll, neck_relative_pitch]
+
+The inbound sensor payload matches the data contract:
+
+    {
+      "torso": { "pitch": -2.3, "roll": 1.1 },
+      "neck":  { "pitch": 5.6 },
+      "timestamp": 1234567
+    }
+
+Note: raw payload validation (NaN / out-of-range / missing fields) is handled
+explicitly in the API layer so a bad reading is *flagged* as a distinct fault
+rather than raising an opaque 422 -- see main.py:validate_reading().
 """
 
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
 from typing import Optional
-from enum import Enum
+from pydantic import BaseModel, Field
 
 
-class PostureCondition(str, Enum):
-    """Enumeration of detectable posture conditions."""
-    GOOD = "good"
-    SLOUCHING = "slouching"
-    FORWARD_HEAD = "forward_head"
-    LATERAL_LEAN = "lateral_lean"
-    MULTIPLE_ISSUES = "multiple_issues"
+class TorsoIMU(BaseModel):
+    pitch: float = Field(..., description="Torso forward/backward tilt (deg)")
+    roll: float = Field(..., description="Torso side-to-side tilt (deg)")
 
 
-class IMUData(BaseModel):
-    """Orientation angles from a single MPU-6050 sensor."""
-    pitch: float = Field(..., description="Forward/backward tilt in degrees")
-    roll: float = Field(..., description="Side-to-side tilt in degrees")
-    yaw: float = Field(..., description="Rotational orientation in degrees")
+class NeckIMU(BaseModel):
+    pitch: float = Field(..., description="Neck forward/backward tilt (deg)")
 
 
 class SensorPacket(BaseModel):
-    """
-    Complete data packet received from the ESP32.
-    Contains readings from both IMU sensors and the flex sensor.
-    """
-    torso: IMUData = Field(..., description="MPU #1 – T4 upper back")
-    neck: IMUData = Field(..., description="MPU #2 – C7 neck base")
-    flex_value: float = Field(0.0, description="Flex sensor curvature reading")
-    timestamp: Optional[float] = Field(None, description="ESP32 millis() timestamp")
+    """Inbound hardware reading (documentation / Swagger schema)."""
+    torso: TorsoIMU
+    neck: NeckIMU
+    timestamp: Optional[float] = Field(None, description="Firmware millis() timestamp")
 
 
-class PostureClassification(BaseModel):
-    """Result of posture analysis."""
-    condition: PostureCondition
-    slouch_angle: float = Field(0.0, description="Torso pitch deviation")
-    forward_head_angle: float = Field(0.0, description="Relative neck pitch deviation")
-    lateral_lean_angle: float = Field(0.0, description="Torso roll deviation")
-    flex_curvature: float = Field(0.0, description="Spinal curvature from flex sensor")
-    score: int = Field(100, ge=0, le=100, description="Posture score 0–100")
+class ClassificationResult(BaseModel):
+    """One classifier's verdict (baseline or personalized)."""
+    model: str
+    condition: str
+    score: int
     warnings: list[str] = Field(default_factory=list)
+    angles: dict = Field(default_factory=dict)
+    # personalized-only extras
+    mahalanobis: Optional[float] = None
+    tau: Optional[float] = None
+    n_calibration_samples: Optional[int] = None
+    fallback: Optional[bool] = None
+    reason: Optional[str] = None
 
 
-class PostureResponse(BaseModel):
-    """
-    Combined response broadcast to the React dashboard via WebSocket.
-    Includes raw sensor data and classification results.
-    """
-    sensor_data: SensorPacket
-    classification: PostureClassification
+class SensorResult(BaseModel):
+    """Full response for a processed reading: both classifiers side by side."""
+    status: str = "ok"
+    timestamp: float
+    torso_pitch: float
+    torso_roll: float
+    neck_relative_pitch: float
+    baseline: ClassificationResult
+    personalized: ClassificationResult
+
+
+class RejectedReading(BaseModel):
+    """Returned (HTTP 400) when a reading fails physical validation."""
+    status: str = "rejected"
+    reason: str
+    detail: str
